@@ -1,6 +1,8 @@
 #include "ProcessLauncher.h"
 #include <cstdio>
 #include <tchar.h>
+#include <thread>
+#include <iostream>
 ProcessLauncher::ProcessLauncher(TCHAR* commandLine)
 {
 	this->commandLine = _tcsdup(commandLine);
@@ -32,6 +34,7 @@ void ProcessLauncher::stop()
 
 void ProcessLauncher::start()
 {
+	
 	ZeroMemory(&si, sizeof(si));
 	si.cb = sizeof(si);
 	ZeroMemory(&pi, sizeof(pi));
@@ -53,6 +56,8 @@ void ProcessLauncher::start()
 		printf("CreateProcess failed (%d).\n", GetLastError());
 		return;
 	}
+	printf("start()\n");
+	showInformation();
 	DWORD exitCode;
 	if (GetExitCodeProcess(pi.hProcess, &exitCode))
 	{
@@ -63,19 +68,48 @@ void ProcessLauncher::start()
 		printf("GetExitCodeProcess failed (%d).\n", GetLastError());
 		return;
 	}
-
+	//std::thread  waiting
+	//waitingThread = new std::thread({ waitForProcess(); });
+	waitingThread = new std::thread(&ProcessLauncher::waitForProcess, this);
 }
 
 void ProcessLauncher::restart()
 {
-	processStatus = ProcessStatus::RESTARTING;
+	
 	stop();
+	processStatus = ProcessStatus::RESTARTING;
 	start();
 }
 
 ProcessStatus ProcessLauncher::getStatus(){
-	return ProcessStatus::IS_WORKING;
+	return processStatus;
+}
+HANDLE ProcessLauncher::getHandle(){
+	return pi.hProcess;
+}
+DWORD ProcessLauncher::getId(){
+	return pi.dwProcessId;
 }
 ProcessLauncher::~ProcessLauncher()
 {
+}
+void ProcessLauncher::waitForProcess(){
+	WaitForSingleObject(pi.hProcess, INFINITE);
+	printf("process closed by itself\n");
+	//std::thread startProcessThread(&ProcessLauncher::start, this);
+	start();
+}
+void ProcessLauncher::showInformation(){
+	std::cout << getId() << " " << getHandle() << std::endl;
+	switch (getStatus()){
+	case	ProcessStatus::IS_WORKING:
+		std::cout << "IS_WORKING" << std::endl;
+		break;
+	case ProcessStatus::RESTARTING:
+		std::cout << "RESTARTING" << std::endl;
+		break;
+	case ProcessStatus::STOPPED:
+		std::cout << "STOPPED" << std::endl;
+		break;
+	}
 }
