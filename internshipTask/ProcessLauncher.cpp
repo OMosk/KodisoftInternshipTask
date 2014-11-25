@@ -74,7 +74,7 @@ void ProcessLauncher::restart()
 }
 
 ProcessStatus ProcessLauncher::getStatus(){
-
+	return ProcessStatus::IS_WORKING;
 }
 ProcessLauncher::~ProcessLauncher()
 {
