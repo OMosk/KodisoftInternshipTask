@@ -6,41 +6,15 @@
 ProcessLauncher::ProcessLauncher(TCHAR* commandLine)
 {
 	this->commandLine = _tcsdup(commandLine);
+	processStatus = ProcessStatus::STOPPED;
 	start();	
 }
-void ProcessLauncher::stop()
-{
-	//si.
-	TerminateProcess(pi.hProcess, 1);	
-	DWORD exitCode;
-	if (GetExitCodeProcess(pi.hProcess, &exitCode))
-	{
-		if (exitCode == 259) processStatus = ProcessStatus::IS_WORKING;
-		else
-		{
-			processStatus = ProcessStatus::STOPPED;
-			CloseHandle(pi.hProcess);
-			CloseHandle(pi.hThread);
-		}
-	}
-	else
-	{
-		printf("GetExitCodeProcess failed (%d).\n", GetLastError());
-		return;
-	}
 
-	
-}
-
-void ProcessLauncher::start()
-{
-	
+bool ProcessLauncher::runProc(){
 	ZeroMemory(&si, sizeof(si));
 	si.cb = sizeof(si);
 	ZeroMemory(&pi, sizeof(pi));
-	//LPTSTR szCmdline = _tcsdup(commandLine);
-
-	// Start the child process. 
+	
 	if (!CreateProcess(NULL,   // No module name (use command line)
 		commandLine,        // Command line
 		NULL,           // Process handle not inheritable
@@ -54,31 +28,70 @@ void ProcessLauncher::start()
 		)
 	{
 		printf("CreateProcess failed (%d).\n", GetLastError());
-		return;
+		return false;
 	}
-	printf("start()\n");
-	showInformation();
+	if (onProcStart)onProcStart();
+	return true;
+}
+bool ProcessLauncher::stopProc(){
+	TerminateProcess(pi.hProcess, 1);// CHANGE EXIT CODE
 	DWORD exitCode;
 	if (GetExitCodeProcess(pi.hProcess, &exitCode))
 	{
-		if (exitCode == 259) processStatus = ProcessStatus::IS_WORKING;
-		else processStatus = ProcessStatus::STOPPED;
+		if (exitCode != 259){
+			CloseHandle(pi.hProcess);
+			CloseHandle(pi.hThread);
+			if (onProcManuallyStopped) onProcManuallyStopped();
+			return true;
+		}
 	}
-	else{
+	else
+	{
 		printf("GetExitCodeProcess failed (%d).\n", GetLastError());
-		return;
+		return false;
 	}
-	//std::thread  waiting
-	//waitingThread = new std::thread({ waitForProcess(); });
-	waitingThread = new std::thread(&ProcessLauncher::waitForProcess, this);
+	return false;
 }
+bool ProcessLauncher::restartProc(){
+	if (stopProc())
+		return runProc();
 
+	return false;
+}
+void ProcessLauncher::start()
+{
+	if (processStatus == ProcessStatus::STOPPED){
+		lastAction = LastAction::START;
+		if(runProc()) processStatus = ProcessStatus::IS_WORKING;
+		showInformation();
+		waitingThread = std::thread(&ProcessLauncher::waitForProcess, this);
+		waitingThread.detach();
+	}
+}
+void ProcessLauncher::stop()
+{
+	//si.
+	if (processStatus == ProcessStatus::IS_WORKING){	
+		lastAction = LastAction::STOP;
+		if (stopProc()){
+			processStatus = ProcessStatus::STOPPED;			
+		}
+	}
+}
 void ProcessLauncher::restart()
 {
-	
-	stop();
-	processStatus = ProcessStatus::RESTARTING;
-	start();
+	if (processStatus == ProcessStatus::IS_WORKING){
+		lastAction = LastAction::RESTART;
+		processStatus = ProcessStatus::RESTARTING;
+		if (restartProc()){
+			processStatus = ProcessStatus::IS_WORKING;
+		}
+		else{
+			processStatus = ProcessStatus::STOPPED;
+		}
+		waitingThread = std::thread(&ProcessLauncher::waitForProcess, this);
+		waitingThread.detach();
+	}
 }
 
 ProcessStatus ProcessLauncher::getStatus(){
@@ -92,12 +105,27 @@ DWORD ProcessLauncher::getId(){
 }
 ProcessLauncher::~ProcessLauncher()
 {
+	/*if (processStatus == ProcessStatus::IS_WORKING){
+		stopProc();
+	}*/
+	stop();
 }
 void ProcessLauncher::waitForProcess(){
-	WaitForSingleObject(pi.hProcess, INFINITE);
-	printf("process closed by itself\n");
-	//std::thread startProcessThread(&ProcessLauncher::start, this);
-	start();
+	do{
+		WaitForSingleObject(pi.hProcess, INFINITE);
+		if (lastAction == LastAction::START){
+			printf("process closed by itself\n");
+			processStatus = ProcessStatus::STOPPED;
+			if(onProcCrash)onProcCrash();//Callback
+			if (!runProc()) break;
+			else processStatus = ProcessStatus::IS_WORKING;
+			//printf("process closed by itself\n");
+		}
+		else{
+			break;
+		}
+	} while (true);
+	processStatus = ProcessStatus::STOPPED;
 }
 void ProcessLauncher::showInformation(){
 	std::cout << getId() << " " << getHandle() << std::endl;
@@ -112,4 +140,13 @@ void ProcessLauncher::showInformation(){
 		std::cout << "STOPPED" << std::endl;
 		break;
 	}
+}
+void ProcessLauncher::setOnProcStart(std::function<void()> onProcStart){
+	this->onProcStart = onProcStart;
+}
+void ProcessLauncher::setOnProcCrash(std::function<void()> onProcCrash){
+	this->onProcCrash = onProcCrash;
+}
+void ProcessLauncher::setOnProcManuallyStopped(std::function<void()> onProcManuallyStopped){
+	this->onProcManuallyStopped = onProcManuallyStopped;
 }

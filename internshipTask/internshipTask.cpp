@@ -6,12 +6,26 @@
 #include <iostream>
 
 using namespace std;
-
+void echoStart(){
+	cout << "Started.Callback" << endl;
+}
+void echoCrash(){
+	cout << "Crash.Callback" << endl; 
+}
+void echoMS(){
+	cout << "Manually stopped.Echo" << endl;
+}
 int _tmain(int argc, _TCHAR* argv[])
 {
 	_TCHAR commandLine[] = L"C:\\Users\\alex3_000\\Documents\\Visual Studio 2013\\Projects\\Release\\TestProcess.exe";
 	ProcessLauncher pl(commandLine);
+	
+	pl.setOnProcStart(bind(echoStart));
+	pl.setOnProcCrash(bind(echoCrash));
+	pl.setOnProcManuallyStopped(bind(echoMS));
+
 	wcout << commandLine << endl << pl.getId() << endl << pl.getHandle() << endl;
+	/*
 	switch (pl.getStatus()){
 	case	ProcessStatus::IS_WORKING:
 		cout << "IS_WORKING" << endl;
@@ -23,9 +37,22 @@ int _tmain(int argc, _TCHAR* argv[])
 		cout << "STOPPED" << endl;
 		break;
 	}
-	_getch();
+	_getch();*/
+	/*pl.restart();
+	switch (pl.getStatus()){
+	case	ProcessStatus::IS_WORKING:
+		cout << "IS_WORKING" << endl;
+		break;
+	case ProcessStatus::RESTARTING:
+		cout << "RESTARTING" << endl;
+		break;
+	case ProcessStatus::STOPPED:
+		cout << "STOPPED" << endl;
+		break;
+	}
+	_getch();*/
 	pl.stop();
-	switch (pl.getStatus()){
+	/*switch (pl.getStatus()){
 	case	ProcessStatus::IS_WORKING:
 		cout << "IS_WORKING" << endl;
 		break;
@@ -37,6 +64,7 @@ int _tmain(int argc, _TCHAR* argv[])
 		break;
 	}
 	_getch();
+	*/
 	return 0;
 }
 
