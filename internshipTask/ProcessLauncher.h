@@ -1,6 +1,7 @@
 #pragma once
 #include <Windows.h>
 #include <thread>
+#include <mutex>
 #include <functional>
 enum ProcessStatus{
 	IS_WORKING, RESTARTING, STOPPED
@@ -10,12 +11,16 @@ class ProcessLauncher
 	enum LastAction{
 		START, STOP, RESTART
 	};
+
+	mutable std::mutex processStatusMutex, lastActionMutex, startCallbackMutex, crashCallbackMutex, manualStopCallbackMutex, processInformationMutex;
+
 	LastAction lastAction;
+	ProcessStatus processStatus;
 
 	STARTUPINFO si;
 	PROCESS_INFORMATION pi;
 	TCHAR *commandLine;
-	ProcessStatus processStatus;
+	
 	
 	std::thread waitingThread;
 	std::function<void()> onProcStart;
@@ -27,14 +32,17 @@ class ProcessLauncher
 	bool restartProc();
 	void waitForProcess();
 	void showInformation();
+	LastAction getLastAction();
+	void setLastAction(LastAction lastAction);
+	void setProcessStatus(ProcessStatus processStatus);
 public:
 	ProcessLauncher(TCHAR* commandLine);
-	void restart();
-	void stop();
-	void start();
-	ProcessStatus getStatus();
-	HANDLE getHandle();
-	DWORD getId();
+	bool restart();
+	bool stop();
+	bool start();
+	ProcessStatus getStatus() const;
+	HANDLE getHandle() const;
+	DWORD getId() const;
 	void setOnProcStart(std::function<void()> onProcStart);
 	void setOnProcCrash(std::function<void()> onProcCrash);
 	void setOnProcManuallyStopped(std::function<void()> onProcManuallyStopped);
