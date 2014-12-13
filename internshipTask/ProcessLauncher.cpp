@@ -4,15 +4,18 @@
 #include <thread>
 
 #include <iostream>
-ProcessLauncher::ProcessLauncher(TCHAR* commandLine)
+#include <sstream>
+ProcessLauncher::ProcessLauncher(TCHAR* commandLine, bool startAtCreation, Logger* logger)
 {
+	this->logger = logger;
 	this->commandLine = _tcsdup(commandLine);
 	processStatus = ProcessStatus::STOPPED;
-	start();	
+	if(startAtCreation)start();	
 }
 
 bool ProcessLauncher::runProc(){
-	std::lock_guard<std::mutex> guard(processInformationMutex);
+	//std::lock_guard<std::mutex> guard(processInformationMutex);
+	processInformationMutex.lock();
 	ZeroMemory(&si, sizeof(si));
 	si.cb = sizeof(si);
 	ZeroMemory(&pi, sizeof(pi));	
@@ -29,11 +32,17 @@ bool ProcessLauncher::runProc(){
 		&pi)           // Pointer to PROCESS_INFORMATION structure
 		)
 	{
-		printf("CreateProcess failed (%d).\n", GetLastError());
+		if (logger){
+			std::wstringstream message;
+			message << "Process creation failed. Error = " << GetLastError();
+			logger->log(message.str());
+		}
 		return false;
 	}
+	processInformationMutex.unlock();
+	
 	std::lock_guard<std::mutex> callbackLock(startCallbackMutex);
-	if (onProcStart)onProcStart();
+	if (onProcStart)std::thread(onProcStart).detach();//onProcStart();
 	return true;
 }
 bool ProcessLauncher::stopProc(){
@@ -44,14 +53,20 @@ bool ProcessLauncher::stopProc(){
 		if (exitCode != 259){
 			CloseHandle(pi.hProcess);
 			CloseHandle(pi.hThread);
+			
 			std::lock_guard<std::mutex> callbackLock(manualStopCallbackMutex);
-			if (onProcManuallyStopped) onProcManuallyStopped();
+			if (onProcManuallyStopped)std::thread(onProcManuallyStopped).detach(); //onProcManuallyStopped();
+			
 			return true;
 		}
 	}
 	else{
-		printf("GetExitCodeProcess failed (%d).\n", GetLastError());
-		//return false;
+		//printf("GetExitCodeProcess failed (%d).\n", GetLastError());
+		if (logger){
+			std::wstringstream message;
+			message << "GetExitCodeProcess failed. PID = " << getId() << ". Error = "<<GetLastError();
+			logger->log(message.str());
+		}
 	}
 	return false;
 }
@@ -63,29 +78,37 @@ bool ProcessLauncher::restartProc(){
 }
 bool ProcessLauncher::start()
 {	
-	//std::lock_guard<std::mutex> lock(processStatusMutex);
-	if (getStatus() == ProcessStatus::STOPPED){
-		//lastAction = LastAction::START;
+	
+	if (getStatus() == ProcessStatus::STOPPED){		
 		setLastAction(LastAction::START);
 		if (runProc()){
-			setProcessStatus(ProcessStatus::IS_WORKING); //processStatus = ProcessStatus::IS_WORKING;
-			showInformation();
-			std::thread(&ProcessLauncher::waitForProcess, this).detach();
+			setProcessStatus(ProcessStatus::IS_WORKING);
+
+			if (waitingThread.joinable()) waitingThread.join();
+			
+			waitingThread = std::thread(&ProcessLauncher::waitForProcess, this);
+
+			if (logger){
+				std::wstringstream message;
+				message << "Process created. PID = " << getId();
+				logger->log(message.str());
+			}
 			return true;
-		}
-		
+		}		
 	}
 	return false;
 }
 bool ProcessLauncher::stop()
 {
-	//si.
 	if (getStatus() == ProcessStatus::IS_WORKING){
-		//lastAction = LastAction::STOP;
 		setLastAction(LastAction::STOP);
 		if (stopProc()){
-			//processStatus = ProcessStatus::STOPPED;			
 			setProcessStatus(ProcessStatus::STOPPED);
+			if (logger){
+				std::wstringstream message;
+				message << "Process stopped. PID = " << getId();
+				logger->log(message.str());
+			}
 			return true;
 		}
 	}
@@ -94,28 +117,35 @@ bool ProcessLauncher::stop()
 bool ProcessLauncher::restart()
 {
 	if (getStatus() == ProcessStatus::IS_WORKING){
-		//lastAction = LastAction::RESTART;
 		setLastAction(LastAction::RESTART);
-		//processStatus = ProcessStatus::RESTARTING;
 		setProcessStatus(ProcessStatus::RESTARTING);
 		if (restartProc()){
-			//processStatus = ProcessStatus::IS_WORKING;
 			setProcessStatus(ProcessStatus::IS_WORKING);
-			std::thread(&ProcessLauncher::waitForProcess, this).detach();
+			
+			if(waitingThread.joinable()) waitingThread.join();
+			waitingThread = std::thread(&ProcessLauncher::waitForProcess, this);
+			
+			if (logger){
+				std::wstringstream message;
+				message << "Process restarted. PID = " << getId();
+				logger->log(message.str());
+			}
 			return true;
 		}
 		else{
-			//processStatus = ProcessStatus::STOPPED;
 			DWORD exitCode;
 			if (GetExitCodeProcess(pi.hProcess, &exitCode)){
 				if (exitCode == 259) setProcessStatus(ProcessStatus::IS_WORKING);
-				else setProcessStatus(ProcessStatus::STOPPED);
-				
+				else setProcessStatus(ProcessStatus::STOPPED);				
 			}
-			
-		}
-		
-		//waitingThread.detach();
+			else{
+				if (logger){
+					std::wstringstream message;
+					message << "GetExitCodeProcess failed. PID = " << getId() << ". Error = " << GetLastError();
+					logger->log(message.str());
+				}
+			}
+		}				
 	}
 	return false;
 }
@@ -134,34 +164,42 @@ DWORD ProcessLauncher::getId() const{
 }
 ProcessLauncher::~ProcessLauncher()
 {
-	/*if (processStatus == ProcessStatus::IS_WORKING){
-		stopProc();
-	}*/
 	stop();
+	if(waitingThread.joinable())waitingThread.join();
 }
 void ProcessLauncher::waitForProcess(){
 	do{
 		WaitForSingleObject(pi.hProcess, INFINITE);
-		if (getLastAction() == LastAction::START){
-			//printf("process closed by itself\n");
-			//processStatus = ProcessStatus::STOPPED;
+		if (getLastAction() == LastAction::START || (getLastAction() == LastAction::RESTART && getStatus() != ProcessStatus::RESTARTING)){
+			if (logger){
+				std::wstringstream message;
+				message << "Process closed by itselft. PID = " << getId();
+				logger->log(message.str());
+			}
+			
 			setProcessStatus(ProcessStatus::STOPPED);
 
 			crashCallbackMutex.lock();
-			if(onProcCrash)onProcCrash();//Callback
+			if(onProcCrash)std::thread(onProcCrash).detach();//Callback
 			crashCallbackMutex.unlock();
 			
-			if (!runProc()) break;
-			else setProcessStatus(ProcessStatus::IS_WORKING);//processStatus = ProcessStatus::IS_WORKING;
-			//printf("process closed by itself\n");
+			if (!runProc()){
+				setProcessStatus(ProcessStatus::STOPPED);
+				break;
+			}
+			else {
+				setProcessStatus(ProcessStatus::IS_WORKING);
+				if (logger){
+					std::wstringstream message;
+					message << "Process created. PID = " << getId();
+					logger->log(message.str());
+				}
+			}
 		}
 		else{
 			break;
 		}
 	} while (true);
-	//processStatus = ProcessStatus::STOPPED;
-	setProcessStatus(ProcessStatus::STOPPED);
-
 }
 void ProcessLauncher::showInformation(){
 	std::cout << getId() << " " << getHandle() << std::endl;

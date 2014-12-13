@@ -3,6 +3,8 @@
 #include <thread>
 #include <mutex>
 #include <functional>
+
+#include "Logger.h"
 enum ProcessStatus{
 	IS_WORKING, RESTARTING, STOPPED
 };
@@ -21,6 +23,7 @@ class ProcessLauncher
 	PROCESS_INFORMATION pi;
 	TCHAR *commandLine;
 	
+	Logger* logger;
 	
 	std::thread waitingThread;
 	std::function<void()> onProcStart;
@@ -36,7 +39,7 @@ class ProcessLauncher
 	void setLastAction(LastAction lastAction);
 	void setProcessStatus(ProcessStatus processStatus);
 public:
-	ProcessLauncher(TCHAR* commandLine);
+	ProcessLauncher(TCHAR* commandLine, bool startAtCreation = true, Logger* logger = NULL);
 	bool restart();
 	bool stop();
 	bool start();

@@ -3,6 +3,7 @@
 
 #include "stdafx.h"
 #include "ProcessLauncher.h"
+#include "Logger.h"
 #include <iostream>
 #include <string>
 using namespace std;
@@ -13,14 +14,19 @@ void echoCrash(){
 	cout << "Crash.Callback" << endl; 
 }
 void echoMS(){
-	cout << "Manually stopped.Echo" << endl;
+	cout << "ManuallyStopped.Callback" << endl;
 }
 int _tmain(int argc, _TCHAR* argv[])
 {
 	//_TCHAR commandLine[] = L"C:\\Users\\alex3_000\\Documents\\Visual Studio 2013\\Projects\\Release\\TestProcess.exe";
 	//_TCHAR commandLine[] = L"C:\\Users\\alex3_000\\Documents\\Visual Studio 2013\\Projects\\Release\\TestProcess.exe";
+	Logger logger(L"log.log");
+	//logger.log(L"First");
+	//logger.log(L"SECOND");
+	
 	_TCHAR commandLine[] = L"notepad.exe";
-	ProcessLauncher pl(commandLine);
+
+	ProcessLauncher pl(commandLine, true, &logger);
 	
 	pl.setOnProcStart(bind(echoStart));
 	pl.setOnProcCrash(bind(echoCrash));
@@ -49,7 +55,7 @@ int _tmain(int argc, _TCHAR* argv[])
 		if (command == L"restart") pl.restart();
 		if (command == L"exit") break;
 		
-		switch (pl.getStatus()){
+		/*switch (pl.getStatus()){
 		case	ProcessStatus::IS_WORKING:
 			cout << "IS_WORKING" << endl;
 			break;
@@ -60,6 +66,7 @@ int _tmain(int argc, _TCHAR* argv[])
 			cout << "STOPPED" << endl;
 			break;
 		}
+		*/
 
 	} while (true);
 	/*
