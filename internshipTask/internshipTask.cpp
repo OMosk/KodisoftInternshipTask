@@ -24,15 +24,21 @@ int _tmain(int argc, _TCHAR* argv[])
 	//logger.log(L"First");
 	//logger.log(L"SECOND");
 	
-	_TCHAR commandLine[] = L"notepad.exe";
+	//_TCHAR commandLine[] = L"notepad.exe";
 
-	ProcessLauncher pl(commandLine, true, &logger);
-	
+	//ProcessLauncher pl(commandLine, true/*, &logger*/);
+	unsigned long pid;
+	cin >> pid;
+	ProcessLauncher pl(pid, &logger);
+
+
 	pl.setOnProcStart(bind(echoStart));
 	pl.setOnProcCrash(bind(echoCrash));
 	pl.setOnProcManuallyStopped(bind(echoMS));
 
-	wcout << commandLine << endl << pl.getId() << endl << pl.getHandle() << endl;
+	wcout << pl.getCommandLine() << endl;
+	cout << pl.getPID() << endl;
+	cout << pl.getHandle() << endl;
 	
 	switch (pl.getStatus()){
 	case	ProcessStatus::IS_WORKING:

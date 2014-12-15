@@ -3,6 +3,7 @@
 #include <thread>
 #include <mutex>
 #include <functional>
+#include <string>
 
 #include "Logger.h"
 enum ProcessStatus{
@@ -22,6 +23,9 @@ class ProcessLauncher
 	STARTUPINFO si;
 	PROCESS_INFORMATION pi;
 	TCHAR *commandLine;
+	DWORD pid;
+	HANDLE pHandle;
+	HANDLE tHandle;
 	
 	Logger* logger;
 	
@@ -38,14 +42,17 @@ class ProcessLauncher
 	LastAction getLastAction();
 	void setLastAction(LastAction lastAction);
 	void setProcessStatus(ProcessStatus processStatus);
+	TCHAR* getCommandLineForProcessByPID(unsigned long pid);
 public:
 	ProcessLauncher(TCHAR* commandLine, bool startAtCreation = true, Logger* logger = NULL);
+	ProcessLauncher(unsigned long pid, Logger* logger = NULL);
 	bool restart();
 	bool stop();
 	bool start();
 	ProcessStatus getStatus() const;
 	HANDLE getHandle() const;
-	DWORD getId() const;
+	DWORD getPID() const;
+	TCHAR* getCommandLine() const;
 	void setOnProcStart(std::function<void()> onProcStart);
 	void setOnProcCrash(std::function<void()> onProcCrash);
 	void setOnProcManuallyStopped(std::function<void()> onProcManuallyStopped);
