@@ -1,5 +1,5 @@
-#include "ProcessLauncher.h"
-#include <cstdio>
+#include "ProcessMonitor.h"
+//#include <cstdio>
 #include <tchar.h>
 #include <thread>
 
@@ -8,25 +8,23 @@
 #include <string>
 #include <winternl.h>
 #include <cwchar>
-ProcessLauncher::ProcessLauncher(TCHAR* commandLine, bool startAtCreation, Logger* logger)
-{
+ProcessMonitor::ProcessMonitor(wchar_t* commandLine, bool startAtCreation, Logger* logger){
 	this->logger = logger;
 	this->commandLine = _tcsdup(commandLine);
 	processStatus = ProcessStatus::STOPPED;
 	lastAction = LastAction::STOP;
-	if (startAtCreation){
+	previousActionFinished = true;
+	if (startAtCreation)
 		start();
-		
-	}
 }
-ProcessLauncher::ProcessLauncher(unsigned long pid, Logger* logger){
-	//HANDLE pHandle = OpenProcess(PROCESS_ALL_ACCESS, false, pid);
+ProcessMonitor::ProcessMonitor(unsigned long pid, Logger* logger){
 	this->logger = logger;
 	this->commandLine = getCommandLineForProcessByPID(pid);
+	previousActionFinished = true;
 	if (this->commandLine == NULL){
 		
 		std::wstringstream message;
-		message << "Process not found. Error = " << GetLastError();		
+		message << "Process ["<<pid<<"] not found. Error = " << GetLastError();		
 		logMessage(message.str().c_str());
 
 		setLastAction(LastAction::STOP);
@@ -42,12 +40,13 @@ ProcessLauncher::ProcessLauncher(unsigned long pid, Logger* logger){
 		setLastAction(LastAction::START);
 		setProcessStatus(ProcessStatus::IS_WORKING);
 		logMessage(L"Watching process", true);
-		waitingThread = std::thread(&ProcessLauncher::waitForProcess, this);
+		waitingThread = std::thread(&ProcessMonitor::waitForProcess, this);
 	}
 }
 
-bool ProcessLauncher::runProc(){
-	//std::lock_guard<std::mutex> guard(processInformationMutex);
+bool ProcessMonitor::runProc(){	
+	
+	
 	processInformationMutex.lock();
 	ZeroMemory(&si, sizeof(si));
 	si.cb = sizeof(si);
@@ -58,21 +57,20 @@ bool ProcessLauncher::runProc(){
 		NULL,           // Thread handle not inheritable
 		FALSE,          // Set handle inheritance to FALSE
 		//CREATE_NEW_CONSOLE,//
-		DETACHED_PROCESS,              // No creation flags
+		DETACHED_PROCESS,             
 		NULL,           // Use parent's environment block
 		NULL,           // Use parent's starting directory 
 		&si,            // Pointer to STARTUPINFO structure
 		&pi)           // Pointer to PROCESS_INFORMATION structure
-		)
-	{
-		
+		){		
 		std::wstringstream message;
 		message << "Process creation failed. Error = " << GetLastError();
-		logMessage(message.str().c_str());
+		logMessage(message.str().c_str());	
+
 		
+
 		return false;
 	}
-
 	pid = pi.dwProcessId;
 	pHandle = pi.hProcess;
 	tHandle = pi.hThread;
@@ -81,13 +79,15 @@ bool ProcessLauncher::runProc(){
 	logMessage(L"Process created", true);
 
 	std::lock_guard<std::mutex> callbackLock(startCallbackMutex);
-	if (onProcStart)std::thread(onProcStart).detach();//onProcStart();
+	if (onProcStart)std::thread(onProcStart).detach();
+
+	
+
 	return true;
 }
-bool ProcessLauncher::stopProc(){
-	//std::lock_guard<std::mutex> lock(processInformationMutex);
+bool ProcessMonitor::stopProc(){
+	
 	processInformationMutex.lock();
-	//TerminateProcess(pi.hProcess, 1);// CHANGE EXIT CODE
 	TerminateProcess(pHandle, 1);
 	DWORD exitCode;
 	if (GetExitCodeProcess(pHandle, &exitCode)){
@@ -96,76 +96,106 @@ bool ProcessLauncher::stopProc(){
 			logMessage(L"Process manually stopped", true);
 			if(pHandle!=NULL)CloseHandle(pHandle);
 			if(tHandle!=NULL)CloseHandle(tHandle);
-			//processInformationMutex.unlock();
-			std::lock_guard<std::mutex> callbackLock(manualStopCallbackMutex);
-			if (onProcManuallyStopped)std::thread(onProcManuallyStopped).detach(); //onProcManuallyStopped();
 			
+			pHandle = tHandle = NULL;
+
+			std::lock_guard<std::mutex> callbackLock(manualStopCallbackMutex);
+			if (onProcManuallyStopped)std::thread(onProcManuallyStopped).detach(); 
+			
+			
+
 			return true;
 		}
 		else{
 			logMessage(L"Process manual shutdown failed", true);
-		}
-		
+		}		
 	}
-	else{
-		processInformationMutex.unlock();
-		//printf("GetExitCodeProcess failed (%d).\n", GetLastError());
+	else
+		processInformationMutex.unlock();		
 		
-	}
 	
 	return false;
 }
-bool ProcessLauncher::restartProc(){
-	if (stopProc())
+bool ProcessMonitor::restartProc(){
+	
+	if (stopProc()){
+		previousActionFinished = true;
+		actionFinishedCondition.notify_one();
 		return runProc();
-
+	}
+	
 	return false;
 }
-bool ProcessLauncher::start()
-{	
-	
+bool ProcessMonitor::start(){	
+	std::unique_lock <std::mutex> uniqueOperationLock(operationMutex);
+	while (!previousActionFinished) actionFinishedCondition.wait(uniqueOperationLock);
+
+	previousActionFinished = false;
+	std::cout << "start() started" << std::endl;
+
 	if (getStatus() == ProcessStatus::STOPPED){		
 		setLastAction(LastAction::START);
 		if (runProc()){
 			setProcessStatus(ProcessStatus::IS_WORKING);
-
-			if (waitingThread.joinable()) waitingThread.join();
+			if (waitingThread.joinable()) waitingThread.join();			
+			waitingThread = std::thread(&ProcessMonitor::waitForProcess, this);
 			
-			waitingThread = std::thread(&ProcessLauncher::waitForProcess, this);
-
-			
+			std::cout << "start() finished" << std::endl;
+			previousActionFinished = true;
+			actionFinishedCondition.notify_one();
 			
 			return true;
 		}
 		else{
-
+			//?
 		}
 	}
+	std::cout << "start() finished" << std::endl;
+	previousActionFinished = true;
+	actionFinishedCondition.notify_one();
 	return false;
 }
-bool ProcessLauncher::stop()
+bool ProcessMonitor::stop()
 {
+	std::unique_lock <std::mutex> uniqueOperationLock(operationMutex);
+	while (!previousActionFinished) actionFinishedCondition.wait(uniqueOperationLock);
+
+	previousActionFinished = false;
+	std::cout << "stop() started" << std::endl;
 	if (getStatus() == ProcessStatus::IS_WORKING){
 		setLastAction(LastAction::STOP);
 		if (stopProc()){
 			setProcessStatus(ProcessStatus::STOPPED);
-			
+			std::cout << "stop() finished" << std::endl;
+			previousActionFinished = true;
+			actionFinishedCondition.notify_one();
+
 			return true;
 		}
 	}
+	std::cout << "stop() finished" << std::endl;
+	previousActionFinished = true;
+	actionFinishedCondition.notify_one();
 	return false;
 }
-bool ProcessLauncher::restart()
+bool ProcessMonitor::restart()
 {
+	std::unique_lock <std::mutex> uniqueOperationLock(operationMutex);
+	while (!previousActionFinished) actionFinishedCondition.wait(uniqueOperationLock);
+
+	previousActionFinished = false;
+	std::cout << "restart() started" << std::endl;
 	if (getStatus() == ProcessStatus::IS_WORKING){
 		setLastAction(LastAction::RESTART);
 		setProcessStatus(ProcessStatus::RESTARTING);
 		if (restartProc()){
-			//setProcessStatus(ProcessStatus::IS_WORKING);
-			
 			if(waitingThread.joinable()) waitingThread.join();
-			waitingThread = std::thread(&ProcessLauncher::waitForProcess, this);
-			setProcessStatus(ProcessStatus::IS_WORKING);
+			waitingThread = std::thread(&ProcessMonitor::waitForProcess, this);
+			
+			setProcessStatus(ProcessStatus::IS_WORKING);	
+			std::cout << "restart() finished" << std::endl;
+			previousActionFinished = true;
+			actionFinishedCondition.notify_one();
 			
 			return true;
 		}
@@ -180,46 +210,48 @@ bool ProcessLauncher::restart()
 			}
 		}				
 	}
+	std::cout << "restart() finished" << std::endl;
+	previousActionFinished = true;
+	actionFinishedCondition.notify_one();
 	return false;
 }
 
-ProcessStatus ProcessLauncher::getStatus() const{
+ProcessStatus ProcessMonitor::getStatus() const{
 	std::lock_guard<std::mutex> lock(processStatusMutex);
 	return processStatus;
 }
-HANDLE ProcessLauncher::getHandle() const{
+HANDLE ProcessMonitor::getHandle() const{
 	std::lock_guard<std::mutex> lock(processInformationMutex);
 	return pHandle;
 }
-DWORD ProcessLauncher::getPID() const{
+DWORD ProcessMonitor::getPID() const{
 	std::lock_guard<std::mutex> lock(processInformationMutex);
 	return pid;
 }
-ProcessLauncher::~ProcessLauncher()
+ProcessMonitor::~ProcessMonitor()
 {
 	stop();
 	if(waitingThread.joinable())waitingThread.join();
+	delete[] commandLine;
 }
-void ProcessLauncher::waitForProcess(){
+void ProcessMonitor::waitForProcess(){
 	do{
-		//WaitForSingleObject(pi.hProcess, INFINITE);
 		WaitForSingleObject(pHandle, INFINITE);
+
 		if (getLastAction() == LastAction::START || (getLastAction() == LastAction::RESTART && getStatus() != ProcessStatus::RESTARTING)){
 			logMessage(L"Process closed by itself", true);
 			
 			setProcessStatus(ProcessStatus::STOPPED);
 
 			crashCallbackMutex.lock();
-			if(onProcCrash)std::thread(onProcCrash).detach();//Callback
+			if(onProcCrash)std::thread(onProcCrash).detach();
 			crashCallbackMutex.unlock();
 			
 			if (!runProc()){
-				//setProcessStatus(ProcessStatus::STOPPED);
 				break;
 			}
 			else {
-				setProcessStatus(ProcessStatus::IS_WORKING);
-				
+				setProcessStatus(ProcessStatus::IS_WORKING);				
 			}
 		}
 		else{
@@ -227,7 +259,7 @@ void ProcessLauncher::waitForProcess(){
 		}
 	} while (true);
 }
-void ProcessLauncher::showInformation(){
+/*void ProcessMonitor::showInformation(){
 	std::cout << getPID() << " " << getHandle() << std::endl;
 	switch (getStatus()){
 	case	ProcessStatus::IS_WORKING:
@@ -240,38 +272,38 @@ void ProcessLauncher::showInformation(){
 		std::cout << "STOPPED" << std::endl;
 		break;
 	}
-}
-void ProcessLauncher::setOnProcStart(std::function<void()> onProcStart){
+}*/
+void ProcessMonitor::setOnProcStart(std::function<void()> onProcStart){
 	std::lock_guard<std::mutex> lock(startCallbackMutex);
 	this->onProcStart = onProcStart;
 }
-void ProcessLauncher::setOnProcCrash(std::function<void()> onProcCrash){
+void ProcessMonitor::setOnProcCrash(std::function<void()> onProcCrash){
 	std::lock_guard<std::mutex> lock(crashCallbackMutex);
 	this->onProcCrash = onProcCrash;
 }
-void ProcessLauncher::setOnProcManuallyStopped(std::function<void()> onProcManuallyStopped){
+void ProcessMonitor::setOnProcManuallyStopped(std::function<void()> onProcManuallyStopped){
 	std::lock_guard<std::mutex> lock(manualStopCallbackMutex);
 	this->onProcManuallyStopped = onProcManuallyStopped;
 }
 
-ProcessLauncher::LastAction ProcessLauncher::getLastAction(){
+ProcessMonitor::LastAction ProcessMonitor::getLastAction(){
 	std::lock_guard<std::mutex> lock(lastActionMutex);
 	return lastAction;
 }
-void ProcessLauncher::setLastAction(LastAction lastAction){
+void ProcessMonitor::setLastAction(LastAction lastAction){
 	std::lock_guard<std::mutex> lock(lastActionMutex);
 	this->lastAction = lastAction;
 }
-void ProcessLauncher::setProcessStatus(ProcessStatus processStatus){
+void ProcessMonitor::setProcessStatus(ProcessStatus processStatus){
 	std::lock_guard<std::mutex> lock(processStatusMutex);
 	this->processStatus = processStatus;
 }
-TCHAR* ProcessLauncher::getCommandLine() const {
+TCHAR* ProcessMonitor::getCommandLine() const {
 	std::lock_guard<std::mutex> lock(processInformationMutex);
 	return commandLine;
 }
 
-TCHAR* ProcessLauncher::getCommandLineForProcessByPID(unsigned long pid){
+wchar_t* ProcessMonitor::getCommandLineForProcessByPID(unsigned long pid){
 	typedef NTSTATUS(NTAPI *_NtQueryInformationProcess)(
 		HANDLE ProcessHandle,
 		DWORD ProcessInformationClass, /* can't be bothered defining the whole enum */
@@ -280,10 +312,8 @@ TCHAR* ProcessLauncher::getCommandLineForProcessByPID(unsigned long pid){
 		PDWORD ReturnLength
 		);
 	PROCESS_BASIC_INFORMATION pinfo;
-//	cin >> pid;
+
 	HMODULE hmod = LoadLibrary(L"ntdll.dll");
-	//NtQueryInformationProcess();
-	//_NtQueryInformationProcess queryInfoProc = (_NtQueryInformationProcess)GetProcAddress(hmod, "NtQueryInformationProcess");
 	_NtQueryInformationProcess NtQueryInformationProcess = (_NtQueryInformationProcess)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtQueryInformationProcess");
 	HANDLE hProcess = OpenProcess(PROCESS_ALL_ACCESS, false, pid);
 	if (hProcess == NULL) return NULL;
@@ -297,8 +327,6 @@ TCHAR* ProcessLauncher::getCommandLineForProcessByPID(unsigned long pid){
 		FreeLibrary(hmod);
 		return NULL;
 	}
-	//printf("NTSTATUS = %X\n", status);
-
 	PPEB ppeb = (PPEB)((PVOID*)&pinfo)[1];
 	PPEB ppebCopy = (PPEB)malloc(sizeof(PEB));
 	BOOL result = ReadProcessMemory(hProcess,
@@ -314,40 +342,27 @@ TCHAR* ProcessLauncher::getCommandLineForProcessByPID(unsigned long pid){
 		pRtlProcParam,
 		pRtlProcParamCopy,
 		sizeof(RTL_USER_PROCESS_PARAMETERS),
-		NULL);
-	
-//	printf("ImagePath=%s\n", pRtlProcParam->ImagePathName.Buffer);
-//	printf("CommandLine=%s\n", pRtlProcParam->CommandLine.Buffer);
+		NULL);	
 	
 	PWSTR wBuffer = pRtlProcParamCopy->CommandLine.Buffer;
 	USHORT len = pRtlProcParamCopy->CommandLine.Length;
-	//PWSTR wBufferCopy = (PWSTR)malloc(len/2);
 	PWSTR wBufferCopy = (PWSTR)new wchar_t[len/2 + 1];
 	result = ReadProcessMemory(hProcess,
 		wBuffer,
 		wBufferCopy, // command line goes here
 		len,
-		NULL);
-	
-	//std::wcout << wBufferCopy << endl;
+		NULL);	
+
 	CloseHandle(hProcess);
 	FreeLibrary(hmod);
 	wBufferCopy[len / 2] = L'\0';
 
-
-	/*wchar_t* resultString = new wchar_t[len/2 + 1];
-	wcsncpy(resultString, (wchar_t*)wBufferCopy, wcslen(wBufferCopy));
-	//resultString[wcslen(wBufferCopy)] = L'\0';
-	resultString[wcslen(wBufferCopy)] = 0;
-	//wcscpy(resultString, wBufferCopy);
-	delete[] wBufferCopy;
-	return (TCHAR*)resultString;*/
-	return (TCHAR*)wBufferCopy;
+	return wBufferCopy;
 }
-void ProcessLauncher::logMessage(const wchar_t* message, bool showPID){
+void ProcessMonitor::logMessage(const wchar_t* message, bool showPID){
 	if (logger){
 		std::wstringstream messageStream;
-		messageStream << L"ProcessLauncher: ";
+		messageStream << L"ProcessMonitor: ";
 		if(showPID)messageStream << "[" << getPID() << "] ";
 		messageStream << message;
 		logger->log(messageStream.str());

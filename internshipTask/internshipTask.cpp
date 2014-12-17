@@ -2,10 +2,11 @@
 //
 
 #include "stdafx.h"
-#include "ProcessLauncher.h"
+#include "ProcessMonitor.h"
 #include "Logger.h"
 #include <iostream>
 #include <string>
+#include <cstdlib>
 using namespace std;
 void echoStart(){
 	cout << "Started.Callback" << endl;
@@ -15,6 +16,20 @@ void echoCrash(){
 }
 void echoMS(){
 	cout << "ManuallyStopped.Callback" << endl;
+}
+void actionPerformer(ProcessMonitor *monitor){
+	srand(time(0));
+	for (int i = 0; i < 50; i++)	{
+		switch (rand() % 3){
+		case 0: monitor->start();
+			break;
+		case 1:	monitor->stop();
+			break;
+		case 2: monitor->restart();
+			break;
+		}
+		//Sleep(100);
+	}
 }
 int _tmain(int argc, _TCHAR* argv[])
 {
@@ -26,17 +41,34 @@ int _tmain(int argc, _TCHAR* argv[])
 	
 	_TCHAR commandLine[] = L"notepad.exe";
 
-	//ProcessLauncher pl(commandLine, true, &logger);
+	ProcessMonitor pl(commandLine, true, &logger);
 	unsigned long pid;
-	cin >> pid;
-	ProcessLauncher pl(pid, &logger);
-
-
+	//cin >> pid;
+	//ProcessMonitor pl(pid, &logger);
 	pl.setOnProcStart(bind(echoStart));
 	pl.setOnProcCrash(bind(echoCrash));
 	pl.setOnProcManuallyStopped(bind(echoMS));
+	
+	thread t1(actionPerformer, &pl);
+	thread t2(actionPerformer, &pl);
+	thread t3(actionPerformer, &pl);
+	t1.join();
+	t2.join();
+	t3.join();
+	
+	/*
+	thread tStop1(&ProcessMonitor::stop, &pl);
+	thread t3(&ProcessMonitor::start, &pl);
+	thread tStop2(&ProcessMonitor::restart, &pl);
+	tStop1.join();
+	t3.join();
+	tStop2.join();
+	*/
+	
+	pl.start();
 
-	wcout << pl.getCommandLine() << endl;
+	if (pl.getCommandLine()!=NULL)
+		wcout << pl.getCommandLine() << endl;
 	cout << pl.getPID() << endl;
 	cout << pl.getHandle() << endl;
 	

@@ -4,18 +4,28 @@
 #include <mutex>
 #include <functional>
 #include <string>
+#include <condition_variable>
 
 #include "Logger.h"
 enum ProcessStatus{
 	IS_WORKING, RESTARTING, STOPPED
 };
-class ProcessLauncher
+class ProcessMonitor
 {
 	enum LastAction{
 		START, STOP, RESTART
 	};
 
-	mutable std::mutex processStatusMutex, lastActionMutex, startCallbackMutex, crashCallbackMutex, manualStopCallbackMutex, processInformationMutex;
+	mutable std::mutex processStatusMutex, 
+		lastActionMutex, 
+		startCallbackMutex, 
+		crashCallbackMutex, 
+		manualStopCallbackMutex, 
+		processInformationMutex,
+		operationMutex;
+	std::condition_variable actionFinishedCondition;
+
+	bool previousActionFinished;
 
 	LastAction lastAction;
 	ProcessStatus processStatus;
@@ -38,25 +48,25 @@ class ProcessLauncher
 	bool stopProc();
 	bool restartProc();
 	void waitForProcess();
-	void showInformation();
+//	void showInformation();
 	LastAction getLastAction();
 	void setLastAction(LastAction lastAction);
 	void setProcessStatus(ProcessStatus processStatus);
 	void logMessage(const wchar_t* message, bool showPID = false);
-	TCHAR* getCommandLineForProcessByPID(unsigned long pid);
+	wchar_t* getCommandLineForProcessByPID(unsigned long pid);
 public:
-	ProcessLauncher(TCHAR* commandLine, bool startAtCreation = true, Logger* logger = NULL);
-	ProcessLauncher(unsigned long pid, Logger* logger = NULL);
+	ProcessMonitor(wchar_t* commandLine, bool startAtCreation = true, Logger* logger = NULL);
+	ProcessMonitor(unsigned long pid, Logger* logger = NULL);
 	bool restart();
 	bool stop();
 	bool start();
 	ProcessStatus getStatus() const;
 	HANDLE getHandle() const;
 	DWORD getPID() const;
-	TCHAR* getCommandLine() const;
+	wchar_t* getCommandLine() const;
 	void setOnProcStart(std::function<void()> onProcStart);
 	void setOnProcCrash(std::function<void()> onProcCrash);
 	void setOnProcManuallyStopped(std::function<void()> onProcManuallyStopped);
-	~ProcessLauncher();
+	~ProcessMonitor();
 };
 
