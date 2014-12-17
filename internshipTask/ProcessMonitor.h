@@ -32,7 +32,7 @@ class ProcessMonitor
 
 	STARTUPINFO si;
 	PROCESS_INFORMATION pi;
-	TCHAR *commandLine;
+	wchar_t *commandLine;
 	DWORD pid;
 	HANDLE pHandle;
 	HANDLE tHandle;
@@ -55,7 +55,7 @@ class ProcessMonitor
 	void logMessage(const wchar_t* message, bool showPID = false);
 	wchar_t* getCommandLineForProcessByPID(unsigned long pid);
 public:
-	ProcessMonitor(wchar_t* commandLine, bool startAtCreation = true, Logger* logger = NULL);
+	ProcessMonitor(const wchar_t* commandLine, bool startAtCreation = true, Logger* logger = NULL);
 	ProcessMonitor(unsigned long pid, Logger* logger = NULL);
 	bool restart();
 	bool stop();
