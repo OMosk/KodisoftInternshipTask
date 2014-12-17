@@ -42,6 +42,7 @@ class ProcessLauncher
 	LastAction getLastAction();
 	void setLastAction(LastAction lastAction);
 	void setProcessStatus(ProcessStatus processStatus);
+	void logMessage(const wchar_t* message, bool showPID = false);
 	TCHAR* getCommandLineForProcessByPID(unsigned long pid);
 public:
 	ProcessLauncher(TCHAR* commandLine, bool startAtCreation = true, Logger* logger = NULL);

@@ -24,9 +24,9 @@ int _tmain(int argc, _TCHAR* argv[])
 	//logger.log(L"First");
 	//logger.log(L"SECOND");
 	
-	//_TCHAR commandLine[] = L"notepad.exe";
+	_TCHAR commandLine[] = L"notepad.exe";
 
-	//ProcessLauncher pl(commandLine, true/*, &logger*/);
+	//ProcessLauncher pl(commandLine, true, &logger);
 	unsigned long pid;
 	cin >> pid;
 	ProcessLauncher pl(pid, &logger);
